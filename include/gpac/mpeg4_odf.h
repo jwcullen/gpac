@@ -1984,6 +1984,13 @@ GF_Err gf_odf_iamf_cfg_write(GF_IAConfig *cfg, u8 **outData, u32 *outSize);
 */
 GF_Err gf_odf_iamf_cfg_write_bs(GF_IAConfig *cfg, GF_BitStream *bs);
 
+/*! Writes the IAMF config payload (OBUs only) to bitstream
+\param cfg the IAMF config to write
+\param bs the bitstream object
+\return error code if any
+*/
+GF_Err gf_odf_iamf_cfg_write_obus(GF_IAConfig *cfg, GF_BitStream *bs);
+
 /*! IAMF config destructor
 \param cfg the IAMF config to destroy
 */

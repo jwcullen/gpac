@@ -969,8 +969,89 @@ GF_Err gf_media_export_saf(GF_MediaExporter *dumper)
 }
 
 
+
+static GF_Err gf_media_export_iamf(GF_MediaExporter *dumper)
+{
+	FILE *iamf;
+	char szName[GF_MAX_PATH];
+	u32 i, count, track_num;
+	GF_Err e = GF_OK;
+
+	track_num = gf_isom_get_track_by_id(dumper->file, dumper->trackID);
+	if (!track_num) {
+		return gf_export_message(dumper, GF_BAD_PARAM, "Invalid track ID %d", dumper->trackID);
+	}
+
+	if (dumper->out_name) {
+		strcpy(szName, dumper->out_name);
+		char *ext = gf_file_ext_start(szName);
+		if (!ext || stricmp(ext, ".iamf")) {
+			strcat(szName, ".iamf");
+		}
+	} else {
+		const char *name = gf_isom_get_filename(dumper->file);
+		const char *ext = gf_file_ext_start(name);
+		if (ext) {
+			char *sep = strrchr(name, '.');
+			if (sep) sep[0] = 0;
+		}
+		sprintf(szName, "%s_track%d.iamf", name, dumper->trackID);
+		if (ext) {
+			char *sep = strrchr(name, 0);
+			sep[0] = '.';
+		}
+	}
+
+	iamf = gf_fopen(szName, "wb");
+	if (!iamf) {
+		return gf_export_message(dumper, GF_IO_ERR, "Error opening %s for writing - check disk access & permissions", szName);
+	}
+
+	GF_ESD *esd = gf_isom_get_esd(dumper->file, track_num, 1);
+	if (!esd || !esd->decoderConfig || !esd->decoderConfig->decoderSpecificInfo) {
+		gf_fclose(iamf);
+		if (esd) gf_odf_desc_del((GF_Descriptor *) esd);
+		return gf_export_message(dumper, GF_ISOM_INVALID_FILE, "Failed to get IAMF config from track %d", dumper->trackID);
+	}
+
+	if (esd->decoderConfig->decoderSpecificInfo->data && esd->decoderConfig->decoderSpecificInfo->dataLength) {
+		gf_fwrite(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, iamf);
+	}
+	gf_odf_desc_del((GF_Descriptor *)esd);
+
+	count = gf_isom_get_sample_count(dumper->file, track_num);
+	for (i=0; i<count; i++) {
+		GF_ISOSample *samp = gf_isom_get_sample(dumper->file, track_num, i+1, NULL);
+		if (!samp) {
+			e = gf_isom_last_error(dumper->file);
+			break;
+		}
+		u8 obu_temporal_delimiter[2] = {4 << 3, 0};
+		gf_fwrite(obu_temporal_delimiter, 2, iamf);
+		gf_fwrite(samp->data, samp->dataLength, iamf);
+		gf_isom_sample_del(&samp);
+		gf_set_progress("IAMF Export", i+1, count);
+		if (dumper->flags & GF_EXPORT_DO_ABORT) break;
+	}
+
+	gf_fclose(iamf);
+	return e;
+}
+
 static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 {
+	if (dumper->file && dumper->trackID) {
+		u32 codec_id = 0;
+		u32 track_num = gf_isom_get_track_by_id(dumper->file, dumper->trackID);
+		if (track_num) {
+			u32 msubtype = gf_isom_get_media_subtype(dumper->file, track_num, 1);
+			codec_id = gf_codec_id_from_isobmf(msubtype);
+		}
+		if (codec_id == GF_CODECID_IAMF) {
+			return gf_media_export_iamf(dumper);
+		}
+	}
+
 	char *args, szSubArgs[1024], szExt[30];
 	GF_Filter *file_out, *reframer, *remux=NULL, *src_filter;
 	GF_FilterSession *fsess;
@@ -1083,6 +1164,8 @@ static GF_Err gf_media_export_filters(GF_MediaExporter *dumper)
 			strcpy(szExt, "ogg");
 		else if (codec_id==GF_CODECID_OPUS)
 			strcpy(szExt, "opus");
+		else if (codec_id==GF_CODECID_IAMF)
+			strcpy(szExt, "iamf");
 
 		if (codec_id==GF_CODECID_SUBPIC) {
 #ifndef GPAC_DISABLE_AV_PARSERS
